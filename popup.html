@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудиоплеер Pro</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="player" id="player">
+        <div class="player-top">
+            <div class="cover">🎵</div>
+            
+            <div class="player-info-controls">
+                <div class="song-details">
+                    <h3 id="title">Выберите файлы</h3>
+                    <p id="artist">Аудиоплеер Pro</p>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress" id="progress"></div>
+                    </div>
+                    <div class="time">
+                        <span id="currentTime">0:00</span>
+                        <span id="duration">0:00</span>
+                    </div>
+                </div>
+
+                <div class="controls-row-main">
+                    <div class="controls">
+                        <button class="btn" id="prev">⏮</button>
+                        <button class="btn btn-play" id="play">▶</button>
+                        <button class="btn" id="next">⏭</button>
+                    </div>
+
+                    <div class="volume-container" title="Прокрутите колесико мыши здесь для изменения громкости">
+                        <span style="font-size: 14px;">🔊</span>
+                        <input type="range" class="volume-slider" id="volume" min="0" max="1" step="0.01" value="0.8">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="file-controls">
+            <div class="controls-row">
+                <div class="add-menu-container">
+                    <button id="addMenuBtn">➕ Добавить ▼</button>
+                    <div id="addMenu" class="add-menu">
+                        <label id="addFilesOpt" for="audioFile" class="menu-label">📄 Файлы</label>
+                        <button id="addFolderOpt" class="menu-label">📁 Папка</button>
+                        <div style="border-top: 1px solid #eee; margin: 4px 0;"></div>
+                        <label class="checkbox-label" title="Добавлять файлы из вложенных папок" style="padding: 6px 15px;">
+                            <input type="checkbox" id="includeSubfolders" checked>
+                            Подпапки
+                        </label>
+                    </div>
+                </div>
+                <button id="loadPlaylistBtn">📂 Загрузить</button>
+                <button id="savePlaylistBtn">💾 Сохранить</button>
+            </div>
+            
+            <div class="controls-row">
+                <button id="sortBtn">🔤 Сортировка</button>
+                <button id="shuffleBtn">🔀 Перемешать</button>
+                <button id="clearPlaylistBtn">🗑️ Очистить</button>
+            </div>
+            
+            <input type="file" id="audioFile" class="file-input" accept="audio/*" multiple style="display:none">
+        </div>
+
+        <div class="playlist-section">
+            <div class="playlist-header">
+                <h4>Плейлист (<span id="playlistCount">0</span>)</h4>
+                <div class="playlist-actions">
+                    <!-- Удалена старая сортировка -->
+                </div>
+            </div>
+            <div class="playlist" id="playlist"></div>
+        </div>
+
+        <div class="status-bar" id="statusBar"></div>
+    </div>
+
+    
+
+    <script src="popup.js"></script>
+</body>
+</html>

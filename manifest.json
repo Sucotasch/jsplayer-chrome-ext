@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Аудиоплеер Pro",
+  "version": "1.0",
+  "description": "Компактный аудиоплеер, работающий в фоновом режиме",
+  "permissions": [
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
