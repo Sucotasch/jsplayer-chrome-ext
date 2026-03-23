@@ -1,6 +1,6 @@
 # JSPlayer Chrome Extension - Technical Documentation
 
-## 🇬🇧 English Version
+## English Version
 
 ### 1. Overview & Capabilities
 **JSPlayer** is a Google Chrome Extension designed to function as a persistent local audio player. Unlike standard web players that lose state upon closing the tab, JSPlayer leverages Chrome's **Offscreen Documents** and **File System Access API** to maintain playback and playlist state across sessions.
