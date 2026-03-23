@@ -11,6 +11,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
+// Listen for global/Chrome media key commands (e.g. MediaPlayPause)
+chrome.commands.onCommand.addListener((command) => {
+    const bc = new BroadcastChannel('audio_player_channel');
+    if (command === 'play-pause') {
+        bc.postMessage({ type: 'TOGGLE_PLAY' });
+    } else if (command === 'next-track') {
+        bc.postMessage({ type: 'NEXT' });
+    } else if (command === 'prev-track') {
+        bc.postMessage({ type: 'PREV' });
+    }
+});
+
 async function setupOffscreenDocument(path) {
     // Check if the offscreen document is already created
     if (await chrome.offscreen.hasDocument()) {

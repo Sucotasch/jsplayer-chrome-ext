@@ -8,44 +8,58 @@ let currentObjectUrl = null;
 
 // ── Silent keepalive ────────────────────────────────────────────────
 // Prevents Chrome from killing the offscreen document when user pauses.
-// A tiny programmatic WAV loops silently on a second <audio> element.
-const keepaliveAudio = document.createElement('audio');
-keepaliveAudio.loop = true;
-keepaliveAudio.volume = 0.001; // near-silent but non-zero so Chrome counts it
-
-function createSilentWav() {
-    const sr = 8000, ch = 1, bps = 8, dur = 1;
-    const samples = sr * dur;
-    const dataSize = samples * ch * (bps / 8);
-    const buf = new ArrayBuffer(44 + dataSize);
-    const v = new DataView(buf);
-    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-    w(0,'RIFF'); v.setUint32(4, 36+dataSize, true); w(8,'WAVE');
-    w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true);
-    v.setUint16(22,ch,true); v.setUint32(24,sr,true);
-    v.setUint32(28,sr*ch*(bps/8),true); v.setUint16(32,ch*(bps/8),true);
-    v.setUint16(34,bps,true);
-    w(36,'data'); v.setUint32(40,dataSize,true);
-    for (let i = 44; i < 44 + dataSize; i++) v.setUint8(i, 128);
-    return new Blob([buf], { type: 'audio/wav' });
-}
+let audioCtx = null;
+let keepaliveInterval = null;
 
 function startKeepalive() {
-    if (!keepaliveAudio.src) {
-        keepaliveAudio.src = URL.createObjectURL(createSilentWav());
-    }
-    keepaliveAudio.play().catch(() => {});
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    if (keepaliveInterval) clearInterval(keepaliveInterval);
+    
+    // Pulse every 15 seconds to fake active audio generation
+    keepaliveInterval = setInterval(() => {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0; // Pure silence
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.05); // 50ms pulse
+    }, 15000);
 }
 
 function stopKeepalive() {
-    keepaliveAudio.pause();
+    if (keepaliveInterval) clearInterval(keepaliveInterval);
+    keepaliveInterval = null;
+    if (audioCtx && audioCtx.state !== 'closed') {
+        audioCtx.close().catch(() => {});
+        audioCtx = null;
+    }
 }
 // ────────────────────────────────────────────────────────────────────
 
+let repeatMode = 'playlist'; // playlist, track, off
+
 audio.addEventListener('ended', () => {
     if (tracks.length > 0) {
-        currentTrackIndex = (currentTrackIndex + 1) % tracks.length;
-        playCurrent();
+        if (repeatMode === 'track') {
+            audio.currentTime = 0;
+            audio.play();
+        } else if (repeatMode === 'playlist') {
+            currentTrackIndex = (currentTrackIndex + 1) % tracks.length;
+            playCurrent();
+        } else if (repeatMode === 'off') {
+            if (currentTrackIndex < tracks.length - 1) {
+                currentTrackIndex++;
+                playCurrent();
+            } else {
+                audio.pause();
+                startKeepalive(); // Keep background alive since we paused naturally
+                broadcastState();
+            }
+        }
     }
 });
 
@@ -79,19 +93,22 @@ bc.onmessage = async (e) => {
             }));
             tracks.push(...newTracks);
             if (wasEmpty && newTracks.length > 0) {
-                startKeepalive();
                 currentTrackIndex = 0;
                 playCurrent();
             }
             if (!msg.skipBroadcast) broadcastState();
             break;
         }
+        case 'SET_REPEAT':
+            repeatMode = msg.mode;
+            break;
         case 'PLAY_INDEX':
             currentTrackIndex = msg.index;
             await playCurrent();
             break;
         case 'PLAY':
             if (tracks.length > 0) {
+                stopKeepalive();
                 if (!currentObjectUrl) playCurrent();
                 else audio.play();
             }
@@ -99,7 +116,20 @@ bc.onmessage = async (e) => {
             break;
         case 'PAUSE':
             audio.pause();
-            // keepalive keeps running — that's the whole point
+            startKeepalive(); // User paused, start heartbeat
+            broadcastState();
+            break;
+        case 'TOGGLE_PLAY':
+            if (tracks.length > 0) {
+                if (audio.paused) {
+                    stopKeepalive();
+                    if (!currentObjectUrl) playCurrent();
+                    else audio.play();
+                } else {
+                    audio.pause();
+                    startKeepalive();
+                }
+            }
             broadcastState();
             break;
         case 'NEXT':
@@ -192,7 +222,7 @@ bc.onmessage = async (e) => {
 
 async function playCurrent() {
     if (!tracks[currentTrackIndex]) return;
-    startKeepalive();
+    stopKeepalive(); // Stop fake pulse, real audio is playing
     const file = tracks[currentTrackIndex].file;
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(file);

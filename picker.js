@@ -37,8 +37,8 @@ btn.addEventListener('click', async () => {
     try {
         const dirHandle = await window.showDirectoryPicker();
 
-        statusTitle.textContent = 'Сканирование папки...';
-        statusDesc.textContent = 'Пожалуйста, подождите.';
+        statusTitle.textContent = 'Scanning folder...';
+        statusDesc.textContent = 'Please wait.';
         btn.style.display = 'none';
 
         const validFiles = [];
@@ -49,7 +49,7 @@ btn.addEventListener('click', async () => {
                         const file = await entry.getFile();
                         validFiles.push(file);
                         if (validFiles.length % 50 === 0) {
-                            statusTitle.textContent = `Найдено ${validFiles.length} треков...`;
+                            statusTitle.textContent = `Found ${validFiles.length} tracks...`;
                         }
                     }
                 } else if (entry.kind === 'directory') {
@@ -63,33 +63,33 @@ btn.addEventListener('click', async () => {
             // Store the handle for future "Load playlist" use
             await storeDirHandle(dirHandle);
 
-            statusTitle.textContent = `Передача ${validFiles.length} треков в плеер...`;
+            statusTitle.textContent = `Transferring ${validFiles.length} tracks...`;
             let i = 0;
             function sendChunk() {
                 const chunk = validFiles.slice(i, i + 50);
                 bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
                 i += 50;
                 if (i < validFiles.length) {
-                    statusTitle.textContent = `Передано ${Math.min(i, validFiles.length)} из ${validFiles.length}...`;
+                    statusTitle.textContent = `Transferred ${Math.min(i, validFiles.length)} of ${validFiles.length}...`;
                     setTimeout(sendChunk, 5);
                 } else {
                     bc.postMessage({ type: 'GET_STATE' });
-                    statusTitle.textContent = 'Готово!';
-                    statusDesc.textContent = `${validFiles.length} треков добавлено. Окно закроется.`;
+                    statusTitle.textContent = 'Done!';
+                    statusDesc.textContent = `${validFiles.length} tracks added. Window will close.`;
                     setTimeout(() => window.close(), 800);
                 }
             }
             sendChunk();
         } else {
-            statusTitle.textContent = 'Аудиофайлы не найдены';
-            statusDesc.textContent = 'Папка не содержит поддерживаемых форматов.';
+            statusTitle.textContent = 'No audio files found';
+            statusDesc.textContent = 'The folder does not contain supported audio formats.';
             setTimeout(() => window.close(), 3000);
         }
     } catch (err) {
         if (err.name === 'AbortError') {
             window.close();
         } else {
-            statusTitle.textContent = 'Ошибка';
+            statusTitle.textContent = 'Error';
             statusDesc.textContent = err.message;
         }
     }

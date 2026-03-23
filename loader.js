@@ -30,13 +30,13 @@ async function loadPlaylist() {
         });
 
         if (!saved || !saved.trackNames || saved.trackNames.length === 0) {
-            statusTitle.textContent = 'Нет сохранённого плейлиста';
-            statusDesc.textContent = 'Сначала сохраните плейлист в плеере.';
+            statusTitle.textContent = 'No saved playlist';
+            statusDesc.textContent = 'Save a playlist in the player first.';
             setTimeout(() => window.close(), 2500);
             return;
         }
 
-        statusDesc.textContent = `Сохранено ${saved.trackNames.length} треков. Запрашиваю доступ...`;
+        statusDesc.textContent = `Saved ${saved.trackNames.length} tracks. Requesting access...`;
 
         // 2. Read stored directory handles
         const handles = await new Promise((resolve, reject) => {
@@ -47,15 +47,15 @@ async function loadPlaylist() {
         });
 
         if (!handles || handles.length === 0) {
-            statusTitle.textContent = 'Нет сохранённых папок';
-            statusDesc.textContent = 'Сначала добавьте папку через плеер.';
+            statusTitle.textContent = 'No saved folders';
+            statusDesc.textContent = 'Add a folder via the player first.';
             setTimeout(() => window.close(), 2500);
             return;
         }
 
         // 3. Request permissions (Chrome shows "Allow" button for each folder)
-        statusTitle.textContent = 'Подтвердите доступ к папкам';
-        statusDesc.textContent = 'Нажмите "Разрешить" в появившихся запросах Chrome.';
+        statusTitle.textContent = 'Confirm Folder Access';
+        statusDesc.textContent = 'Click "Allow" in the Chrome permission prompts.';
 
         const grantedHandles = [];
         for (const entry of handles) {
@@ -70,14 +70,14 @@ async function loadPlaylist() {
         }
 
         if (grantedHandles.length === 0) {
-            statusTitle.textContent = 'Доступ отклонён';
-            statusDesc.textContent = 'Без доступа к папкам восстановить плейлист невозможно.';
+            statusTitle.textContent = 'Access Denied';
+            statusDesc.textContent = 'Cannot restore playlist without folder access.';
             setTimeout(() => window.close(), 3000);
             return;
         }
 
         // 4. Scan granted directories
-        statusTitle.textContent = 'Сканирование папок...';
+        statusTitle.textContent = 'Scanning folders...';
         const fileMap = new Map();
         let scanned = 0;
 
@@ -90,7 +90,7 @@ async function loadPlaylist() {
                             fileMap.set(entry.name, file);
                             scanned++;
                             if (scanned % 50 === 0) {
-                                progressEl.textContent = `Найдено ${scanned} аудиофайлов...`;
+                                progressEl.textContent = `Found ${scanned} audio files...`;
                             }
                         }
                     }
@@ -104,7 +104,7 @@ async function loadPlaylist() {
             await scanDir(h);
         }
 
-        progressEl.textContent = `Всего найдено ${fileMap.size} аудиофайлов`;
+        progressEl.textContent = `Total ${fileMap.size} audio files found`;
 
         // 5. Match to saved order
         const orderedFiles = [];
@@ -118,14 +118,14 @@ async function loadPlaylist() {
         }
 
         if (orderedFiles.length === 0) {
-            statusTitle.textContent = 'Файлы не найдены';
-            statusDesc.textContent = 'Ни один трек из плейлиста не был найден в папках.';
+            statusTitle.textContent = 'Files not found';
+            statusDesc.textContent = 'No tracks from the playlist were found in the selected folders.';
             setTimeout(() => window.close(), 3000);
             return;
         }
 
         // 6. Clear old and send restored files
-        statusTitle.textContent = `Передача ${orderedFiles.length} треков в плеер...`;
+        statusTitle.textContent = `Transferring ${orderedFiles.length} tracks...`;
         bc.postMessage({ type: 'CLEAR' });
 
         // Restore volume
@@ -140,7 +140,7 @@ async function loadPlaylist() {
             bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
             i += 50;
             if (i < orderedFiles.length) {
-                progressEl.textContent = `Передано ${Math.min(i, orderedFiles.length)} из ${orderedFiles.length}...`;
+                progressEl.textContent = `Transferred ${Math.min(i, orderedFiles.length)} of ${orderedFiles.length}...`;
                 setTimeout(sendChunk, 5);
             } else {
                 bc.postMessage({ type: 'GET_STATE' });
@@ -152,11 +152,11 @@ async function loadPlaylist() {
                 }, 200);
 
                 if (missing.length > 0) {
-                    statusTitle.textContent = `Восстановлено ${orderedFiles.length} из ${saved.trackNames.length}`;
-                    statusDesc.textContent = `Не найдено: ${missing.length} треков.`;
+                    statusTitle.textContent = `Restored ${orderedFiles.length} of ${saved.trackNames.length}`;
+                    statusDesc.textContent = `Missing: ${missing.length} tracks.`;
                 } else {
-                    statusTitle.textContent = 'Плейлист полностью восстановлен!';
-                    statusDesc.textContent = `${orderedFiles.length} треков загружено.`;
+                    statusTitle.textContent = 'Playlist fully restored!';
+                    statusDesc.textContent = `${orderedFiles.length} tracks loaded.`;
                 }
                 progressEl.textContent = '';
                 setTimeout(() => window.close(), 1200);
@@ -166,7 +166,7 @@ async function loadPlaylist() {
 
     } catch (err) {
         console.error(err);
-        statusTitle.textContent = 'Ошибка';
+        statusTitle.textContent = 'Error';
         statusDesc.textContent = err.message;
         setTimeout(() => window.close(), 4000);
     }

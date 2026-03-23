@@ -1,5 +1,26 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "100",
+  "commands": {
+    "play-pause": {
+      "suggested_key": {
+        "default": "MediaPlayPause"
+      },
+      "description": "Play / Pause"
+    },
+    "next-track": {
+      "suggested_key": {
+        "default": "MediaNextTrack"
+      },
+      "description": "Next Track"
+    },
+    "prev-track": {
+      "suggested_key": {
+        "default": "MediaPrevTrack"
+      },
+      "description": "Previous Track"
+    }
+  },
   "name": "Аудиоплеер Pro",
   "version": "1.0",
   "description": "Компактный аудиоплеер, работающий в фоновом режиме",
