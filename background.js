@@ -3,17 +3,27 @@ const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Check if message is for background script directly
-    if (message.type === 'SETUP_OFFSCREEN') {
-        setupOffscreenDocument(OFFSCREEN_DOCUMENT_PATH).then(() => {
-            sendResponse({ status: 'done' });
-        });
-        return true; // Keep message channel open for async response
+    switch (message.type) {
+        case 'SETUP_OFFSCREEN':
+            setupOffscreenDocument(OFFSCREEN_DOCUMENT_PATH).then(() => {
+                sendResponse({ status: 'done' });
+            });
+            return true; // Keep message channel open for async response
+        case 'LOAD_LAST_SESSION':
+            chrome.windows.create({
+                url: 'loader.html?playlistId=session-last&autoplay=true',
+                type: 'popup',
+                width: 400,
+                height: 300
+            });
+            break;
     }
 });
 
+const bc = new BroadcastChannel('audio_player_channel');
+
 // Listen for global/Chrome media key commands (e.g. MediaPlayPause)
 chrome.commands.onCommand.addListener((command) => {
-    const bc = new BroadcastChannel('audio_player_channel');
     if (command === 'play-pause') {
         bc.postMessage({ type: 'TOGGLE_PLAY' });
     } else if (command === 'next-track') {

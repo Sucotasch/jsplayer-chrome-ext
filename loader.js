@@ -16,15 +16,42 @@ function openHandlesDB() {
         req.onerror = () => reject(req.error);
     });
 }
-
 async function loadPlaylist() {
     try {
+        statusTitle.textContent = 'Initializing engine...';
         const db = await openHandlesDB();
 
+        // 1. Ensure Offscreen document exists
+        await new Promise(resolve => {
+            chrome.runtime.sendMessage({ type: 'SETUP_OFFSCREEN' }, () => resolve());
+        });
+
+        // 2. Handshake: Wait for PONG
+        let isReady = false;
+        const pongListener = (e) => { if (e.data.type === 'PONG') isReady = true; };
+        bc.addEventListener('message', pongListener);
+        
+        for (let attempt = 0; attempt < 10; attempt++) {
+            bc.postMessage({ type: 'PING' });
+            await new Promise(r => setTimeout(r, 200));
+            if (isReady) break;
+        }
+        bc.removeEventListener('message', pongListener);
+
+        if (!isReady) {
+            statusTitle.textContent = 'Engine error';
+            statusDesc.textContent = 'Could not connect to audio engine.';
+            return;
+        }
+
         // 1. Read saved playlist
+        const urlParams = new URLSearchParams(window.location.search);
+        const playlistId = urlParams.get('playlistId') || 'session-last';
+        const autoplay = urlParams.get('autoplay') === 'true';
+
         const saved = await new Promise((resolve, reject) => {
             const tx = db.transaction('savedPlaylist', 'readonly');
-            const req = tx.objectStore('savedPlaylist').get('current');
+            const req = tx.objectStore('savedPlaylist').get(playlistId);
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
         });
@@ -133,36 +160,53 @@ async function loadPlaylist() {
             bc.postMessage({ type: 'SET_VOLUME', volume: saved.volume });
         }
 
-        // Send in chunks
+        // Send in chunks with ACK
         let i = 0;
-        function sendChunk() {
-            const chunk = orderedFiles.slice(i, i + 50);
-            bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
-            i += 50;
-            if (i < orderedFiles.length) {
-                progressEl.textContent = `Transferred ${Math.min(i, orderedFiles.length)} of ${orderedFiles.length}...`;
-                setTimeout(sendChunk, 5);
-            } else {
-                bc.postMessage({ type: 'GET_STATE' });
+        let ackReceived = false;
+        const ackListener = (e) => { if (e.data.type === 'ADD_FILES_ACK') ackReceived = true; };
+        bc.addEventListener('message', ackListener);
 
-                // Navigate to saved track
-                const targetIndex = Math.min(saved.currentTrackIndex || 0, orderedFiles.length - 1);
-                setTimeout(() => {
-                    bc.postMessage({ type: 'PLAY_INDEX', index: targetIndex });
-                }, 200);
-
-                if (missing.length > 0) {
-                    statusTitle.textContent = `Restored ${orderedFiles.length} of ${saved.trackNames.length}`;
-                    statusDesc.textContent = `Missing: ${missing.length} tracks.`;
-                } else {
-                    statusTitle.textContent = 'Playlist fully restored!';
-                    statusDesc.textContent = `${orderedFiles.length} tracks loaded.`;
+        try {
+            while (i < orderedFiles.length) {
+                const chunk = orderedFiles.slice(i, i + 50);
+                ackReceived = false;
+                bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
+                
+                for (let t = 0; t < 20; t++) {
+                    if (ackReceived) break;
+                    await new Promise(r => setTimeout(r, 100));
                 }
-                progressEl.textContent = '';
-                setTimeout(() => window.close(), 1200);
+                
+                i += 50;
+                progressEl.textContent = `Transferred ${Math.min(i, orderedFiles.length)} of ${orderedFiles.length}...`;
             }
+
+            bc.postMessage({ type: 'GET_STATE' });
+
+            // Navigate to saved track
+            if (autoplay) {
+                setTimeout(() => {
+                    bc.postMessage({ 
+                        type: 'RESUME_STATE', 
+                        index: saved.currentTrackIndex || 0,
+                        time: saved.currentTime || 0,
+                        volume: saved.volume
+                    });
+                }, 500);
+            }
+
+            if (missing.length > 0) {
+                statusTitle.textContent = `Restored ${orderedFiles.length} of ${saved.trackNames.length}`;
+                statusDesc.textContent = `Missing: ${missing.length} tracks.`;
+            } else {
+                statusTitle.textContent = 'Playlist fully restored!';
+                statusDesc.textContent = `${orderedFiles.length} tracks loaded.`;
+            }
+            progressEl.textContent = '';
+            setTimeout(() => window.close(), 1500);
+        } finally {
+            bc.removeEventListener('message', ackListener);
         }
-        sendChunk();
 
     } catch (err) {
         console.error(err);

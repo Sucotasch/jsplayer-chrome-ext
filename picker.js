@@ -37,26 +37,55 @@ btn.addEventListener('click', async () => {
     try {
         const dirHandle = await window.showDirectoryPicker();
 
-        statusTitle.textContent = 'Scanning folder...';
+        statusTitle.textContent = 'Initializing engine...';
         statusDesc.textContent = 'Please wait.';
         btn.style.display = 'none';
+
+        // 1. Ensure Offscreen document exists
+        await new Promise(resolve => {
+            chrome.runtime.sendMessage({ type: 'SETUP_OFFSCREEN' }, () => resolve());
+        });
+
+        // 2. Handshake: Wait for PONG
+        let isReady = false;
+        const pongListener = (e) => { if (e.data.type === 'PONG') isReady = true; };
+        bc.addEventListener('message', pongListener);
+        
+        for (let attempt = 0; attempt < 10; attempt++) {
+            bc.postMessage({ type: 'PING' });
+            await new Promise(r => setTimeout(r, 200));
+            if (isReady) break;
+        }
+        bc.removeEventListener('message', pongListener);
+
+        if (!isReady) {
+            statusTitle.textContent = 'Engine error';
+            statusDesc.textContent = 'Could not connect to audio engine. Please try again.';
+            btn.style.display = 'block';
+            return;
+        }
 
         const validFiles = [];
         async function traverse(handle) {
             for await (const entry of handle.values()) {
-                if (entry.kind === 'file') {
-                    if (/\.(mp3|wav|ogg|flac|m4a)$/i.test(entry.name)) {
-                        const file = await entry.getFile();
-                        validFiles.push(file);
-                        if (validFiles.length % 50 === 0) {
-                            statusTitle.textContent = `Found ${validFiles.length} tracks...`;
+                try {
+                    if (entry.kind === 'file') {
+                        if (/\.(mp3|wav|ogg|flac|m4a)$/i.test(entry.name)) {
+                            const file = await entry.getFile();
+                            validFiles.push(file);
+                            if (validFiles.length % 50 === 0) {
+                                statusTitle.textContent = `Found ${validFiles.length} tracks...`;
+                            }
                         }
+                    } else if (entry.kind === 'directory') {
+                        await traverse(entry);
                     }
-                } else if (entry.kind === 'directory') {
-                    await traverse(entry);
+                } catch (e) {
+                    console.warn('Skipping file due to error:', entry.name, e);
                 }
             }
         }
+        statusTitle.textContent = 'Scanning folders...';
         await traverse(dirHandle);
 
         if (validFiles.length > 0) {
@@ -64,22 +93,36 @@ btn.addEventListener('click', async () => {
             await storeDirHandle(dirHandle);
 
             statusTitle.textContent = `Transferring ${validFiles.length} tracks...`;
+            
+            // 3. ACK-based transfer logic
             let i = 0;
-            function sendChunk() {
-                const chunk = validFiles.slice(i, i + 50);
-                bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
-                i += 50;
-                if (i < validFiles.length) {
+            let ackReceived = false;
+            const ackListener = (e) => { if (e.data.type === 'ADD_FILES_ACK') ackReceived = true; };
+            bc.addEventListener('message', ackListener);
+
+            try {
+                while (i < validFiles.length) {
+                    const chunk = validFiles.slice(i, i + 50);
+                    ackReceived = false;
+                    bc.postMessage({ type: 'ADD_FILES', files: chunk, skipBroadcast: true });
+                    
+                    // Wait for ACK with timeout
+                    for (let t = 0; t < 20; t++) { // 2 second timeout per chunk
+                        if (ackReceived) break;
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                    
+                    i += 50;
                     statusTitle.textContent = `Transferred ${Math.min(i, validFiles.length)} of ${validFiles.length}...`;
-                    setTimeout(sendChunk, 5);
-                } else {
-                    bc.postMessage({ type: 'GET_STATE' });
-                    statusTitle.textContent = 'Done!';
-                    statusDesc.textContent = `${validFiles.length} tracks added. Window will close.`;
-                    setTimeout(() => window.close(), 800);
                 }
+                
+                bc.postMessage({ type: 'GET_STATE' });
+                statusTitle.textContent = 'Done!';
+                statusDesc.textContent = `${validFiles.length} tracks added. Window will close.`;
+                setTimeout(() => window.close(), 1000);
+            } finally {
+                bc.removeEventListener('message', ackListener);
             }
-            sendChunk();
         } else {
             statusTitle.textContent = 'No audio files found';
             statusDesc.textContent = 'The folder does not contain supported audio formats.';

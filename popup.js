@@ -48,9 +48,11 @@ const mainSettingsBtn = document.getElementById('mainSettingsBtn');
 const settingsMenu = document.getElementById('settingsMenu');
 const toggleThemeBtn = document.getElementById('toggleThemeBtn');
 const statusMsg = document.getElementById('statusBar'); // Assuming statusBar is now statusMsg
+const playlistSearch = document.getElementById('playlistSearch');
 
 // State
 let localTracksCount = 0;
+let lastSessionData = null;
 let sortMode = 'default';
 let isPlaying = false; // Added based on snippet
 let currentDuration = 0; // Added based on snippet
@@ -92,15 +94,19 @@ chrome.runtime.sendMessage({ type: 'SETUP_OFFSCREEN' }, () => {
 
 bc.onmessage = (e) => {
     const msg = e.data;
-    if (msg.type === 'STATE_UPDATE') {
-        syncUI(msg);
-    } else if (msg.type === 'TIME_UPDATE') {
-        const percent = (msg.currentTime / msg.duration) * 100 || 0;
-        progress.style.width = `${percent}%`;
-        currentTimeEl.textContent = formatTime(msg.currentTime);
-        durationEl.textContent = formatTime(msg.duration);
-    } else if (msg.type === 'STATE_FOR_SAVE') {
-        savePlaylistToIDB(msg.trackNames, msg.currentTrackIndex, msg.volume);
+    switch (msg.type) {
+        case 'STATE_UPDATE':
+            syncUI(msg);
+            break;
+        case 'STATE_FOR_SAVE':
+            savePlaylistData(msg);
+            break;
+        case 'TIME_UPDATE':
+            const percent = (msg.currentTime / msg.duration) * 100 || 0;
+            progress.style.width = `${percent}%`;
+            currentTimeEl.textContent = formatTime(msg.currentTime);
+            durationEl.textContent = formatTime(msg.duration);
+            break;
     }
 };
 
@@ -119,14 +125,31 @@ function showStatus(message, type = 'info') {
     }, 3000);
 }
 
-function syncUI({ tracks, currentTrackIndex, isPlaying: newIsPlaying, volume: rawVolume }) { // Renamed isPlaying to newIsPlaying to avoid conflict with global state
+function syncUI({ tracks, currentTrackIndex, isPlaying: newIsPlaying, volume: rawVolume }) {
+
     isPlaying = newIsPlaying; // Update global isPlaying state
     localTracksCount = tracks.length;
     playlistCount.textContent = tracks.length;
     
+    // Sync volume slider without triggering events
+    if (document.activeElement !== volume) {
+        volume.value = rawVolume;
+    }
+
+    if (tracks.length === 0 && localTracksCount > 0) {
+        // Potentially a race condition during load, skip clearing UI
+        return;
+    }
+
     if (tracks.length === 0) {
-        title.textContent = 'Select files';
-        artist.textContent = 'AudioPlayer Pro';
+        player.classList.add('ghost-mode');
+        if (lastSessionData) {
+            title.textContent = lastSessionData.trackName || 'Select files';
+            artist.textContent = 'Last played (Click Play to Resume)';
+        } else {
+            title.textContent = 'Select files';
+            artist.textContent = 'AudioPlayer Pro';
+        }
         playBtn.textContent = '▶';
         player.classList.remove('playing');
         progress.style.width = '0%';
@@ -136,10 +159,7 @@ function syncUI({ tracks, currentTrackIndex, isPlaying: newIsPlaying, volume: ra
         return;
     }
 
-    // Sync volume slider without triggering events
-    if (document.activeElement !== volume) {
-        volume.value = rawVolume;
-    }
+    player.classList.remove('ghost-mode');
 
     if (isPlaying) {
         playBtn.textContent = '⏸';
@@ -266,10 +286,25 @@ function transmitFilesToBackground(validFiles, sourceInput) {
 // -- UI BINDINGS --
 playBtn?.addEventListener('click', () => {
     if (localTracksCount === 0) {
-        showStatus('Add files first!', 'error');
+        if (lastSessionData) {
+            // Open loader directly - bc.postMessage goes to offscreen, not background
+            chrome.windows.create({
+                url: chrome.runtime.getURL('loader.html') + '?playlistId=session-last&autoplay=true',
+                type: 'popup',
+                width: 420,
+                height: 320,
+                focused: true
+            });
+            showStatus('Resuming last session...', 'info');
+        } else {
+            showStatus('No session found. Add a playlist first!', 'error');
+        }
         return;
     }
     if (player.classList.contains('playing')) {
+        // Save exact position at pause time so browser sleep doesn't lose it
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'session-last' });
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'current' });
         bc.postMessage({ type: 'PAUSE' });
     } else {
         bc.postMessage({ type: 'PLAY' });
@@ -306,8 +341,99 @@ player?.addEventListener('wheel', (e) => {
     bc.postMessage({ type: 'SET_VOLUME', volume: vol });
 }, { passive: false });
 
+shuffleBtn?.addEventListener('click', () => {
+    bc.postMessage({ type: 'SHUFFLE' });
+    showStatus('Playlist shuffled', 'success');
+});
+
 clearPlaylistBtn?.addEventListener('click', () => {
-    bc.postMessage({ type: 'CLEAR' });
+    // Save current position before clearing so Ghost resume works
+    if (localTracksCount > 0) {
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'session-last' });
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'current' });
+        // Delay CLEAR to allow DB writes to complete
+        setTimeout(() => bc.postMessage({ type: 'CLEAR' }), 300);
+    } else {
+        bc.postMessage({ type: 'CLEAR' });
+    }
+});
+
+async function savePlaylistData(data) {
+    const db = await openHandlesDB();
+    const tx = db.transaction('savedPlaylist', 'readwrite');
+    const store = tx.objectStore('savedPlaylist');
+    
+    const entry = {
+        id: data.playlistId || 'session-last',
+        trackNames: data.trackNames,
+        currentTrackIndex: data.currentTrackIndex,
+        currentTime: data.currentTime,
+        volume: data.volume,
+        timestamp: Date.now()
+    };
+    
+    if (data.playlistId && data.playlistId.startsWith('catalog-')) {
+        entry.name = data.playlistId.replace('catalog-', '');
+    }
+    
+    store.put(entry);
+    if (entry.id === 'session-last') {
+        lastSessionData = { trackName: data.trackNames[data.currentTrackIndex] };
+    }
+}
+
+async function checkLastSession() {
+    const db = await openHandlesDB();
+    const tx = db.transaction('savedPlaylist', 'readonly');
+    const store = tx.objectStore('savedPlaylist');
+    const req = store.get('session-last');
+    req.onsuccess = () => {
+        if (req.result && localTracksCount === 0) {
+            lastSessionData = { trackName: req.result.trackNames[req.result.currentTrackIndex] };
+            syncUI({ tracks: [], currentTrackIndex: 0, isPlaying: false, volume: 1 });
+        }
+    };
+}
+
+// Initial check
+checkLastSession();
+
+// Auto-save logic
+setInterval(() => {
+    if (player.classList.contains('playing')) {
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'session-last' });
+    }
+}, 10000);
+
+const saveFavoriteBtn = document.getElementById('saveFavoriteBtn');
+saveFavoriteBtn.addEventListener('click', () => {
+    const name = prompt('Enter name for this playlist:');
+    if (name) {
+        bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'catalog-' + name });
+    }
+});
+
+const showCatalogBtn = document.getElementById('showCatalogBtn');
+showCatalogBtn.addEventListener('click', async () => {
+    const db = await openHandlesDB();
+    const tx = db.transaction('savedPlaylist', 'readonly');
+    const store = tx.objectStore('savedPlaylist');
+    const req = store.getAll();
+    req.onsuccess = () => {
+        const catalog = req.result.filter(item => item.id.startsWith('catalog-'));
+        if (catalog.length === 0) {
+            alert('No favorite playlists saved yet.');
+            return;
+        }
+        const list = catalog.map(item => `- ${item.name}`).join('\n');
+        const choice = prompt(`Saved Playlists:\n${list}\n\nEnter name to load:`);
+        if (choice) {
+            const found = catalog.find(item => item.name === choice);
+            if (found) {
+                window.open(`loader.html?playlistId=${found.id}&autoplay=true`, 'loader', 'width=400,height=300');
+            }
+        }
+    };
 });
 
 sortBtn?.addEventListener('click', () => {
@@ -338,7 +464,10 @@ savePlaylistBtn?.addEventListener('click', () => {
         showStatus('Playlist is empty!', 'error');
         return;
     }
-    bc.postMessage({ type: 'GET_STATE_FOR_SAVE' });
+    // Save as both 'current' (for Load Playlist button) and 'session-last' (for Ghost resume)
+    bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'current' });
+    bc.postMessage({ type: 'GET_STATE_FOR_SAVE', playlistId: 'session-last' });
+    showStatus('Playlist saved!', 'success');
 });
 
 loadPlaylistBtn?.addEventListener('click', () => {
@@ -390,6 +519,19 @@ repeatBtn?.addEventListener('click', () => {
     localStorage.setItem('audioPlayerRepeat', repeatMode);
     updateRepeatIcon();
     bc.postMessage({ type: 'SET_REPEAT', mode: repeatMode });
+});
+
+playlistSearch?.addEventListener('input', () => {
+    const query = playlistSearch.value.toLowerCase();
+    const items = playlistEl.querySelectorAll('.playlist-item');
+    items.forEach(item => {
+        const name = item.querySelector('.playlist-item-name').textContent.toLowerCase();
+        if (name.includes(query)) {
+            item.style.display = 'flex';
+        } else {
+            item.style.display = 'none';
+        }
+    });
 });
 
 // -- PLAYLIST RENDERING --
@@ -459,6 +601,16 @@ function renderPlaylist(tracks, currentTrackIndex) {
     
     playlistEl.innerHTML = '';
     playlistEl.appendChild(fragment);
+
+    // Maintain search filter if active
+    if (playlistSearch && playlistSearch.value) {
+        const query = playlistSearch.value.toLowerCase();
+        const items = playlistEl.querySelectorAll('.playlist-item');
+        items.forEach(item => {
+            const name = item.querySelector('.playlist-item-name').textContent.toLowerCase();
+            if (!name.includes(query)) item.style.display = 'none';
+        });
+    }
 }
 
 // ── IndexedDB helpers ──────────────────────────────────────────────

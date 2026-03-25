@@ -6,39 +6,8 @@ let tracks = [];
 let currentTrackIndex = 0;
 let currentObjectUrl = null;
 
-// ── Silent keepalive ────────────────────────────────────────────────
-// Prevents Chrome from killing the offscreen document when user pauses.
-let audioCtx = null;
-let keepaliveInterval = null;
-
-function startKeepalive() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    
-    if (keepaliveInterval) clearInterval(keepaliveInterval);
-    
-    // Pulse every 15 seconds to fake active audio generation
-    keepaliveInterval = setInterval(() => {
-        if (!audioCtx) return;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0; // Pure silence
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.05); // 50ms pulse
-    }, 15000);
-}
-
-function stopKeepalive() {
-    if (keepaliveInterval) clearInterval(keepaliveInterval);
-    keepaliveInterval = null;
-    if (audioCtx && audioCtx.state !== 'closed') {
-        audioCtx.close().catch(() => {});
-        audioCtx = null;
-    }
-}
 // ────────────────────────────────────────────────────────────────────
+
 
 let repeatMode = 'playlist'; // playlist, track, off
 
@@ -56,7 +25,6 @@ audio.addEventListener('ended', () => {
                 playCurrent();
             } else {
                 audio.pause();
-                startKeepalive(); // Keep background alive since we paused naturally
                 broadcastState();
             }
         }
@@ -81,21 +49,23 @@ audio.onloadedmetadata = () => {
 bc.onmessage = async (e) => {
     const msg = e.data;
     switch (msg.type) {
+        case 'PING':
+            bc.postMessage({ type: 'PONG' });
+            break;
         case 'GET_STATE':
             broadcastState();
             break;
         case 'ADD_FILES': {
-            const wasEmpty = tracks.length === 0;
             const newTracks = msg.files.map((file) => ({
                 name: file.name.replace(/\.[^/.]+$/, ''),
                 duration: 0,
                 file: file
             }));
             tracks.push(...newTracks);
-            if (wasEmpty && newTracks.length > 0) {
-                currentTrackIndex = 0;
-                playCurrent();
-            }
+            
+            // Acknowledge chunk received to prevent buffer overflow
+            bc.postMessage({ type: 'ADD_FILES_ACK', count: msg.files.length });
+
             if (!msg.skipBroadcast) broadcastState();
             break;
         }
@@ -108,7 +78,6 @@ bc.onmessage = async (e) => {
             break;
         case 'PLAY':
             if (tracks.length > 0) {
-                stopKeepalive();
                 if (!currentObjectUrl) playCurrent();
                 else audio.play();
             }
@@ -116,18 +85,21 @@ bc.onmessage = async (e) => {
             break;
         case 'PAUSE':
             audio.pause();
-            startKeepalive(); // User paused, start heartbeat
             broadcastState();
+            break;
+        case 'RESUME_STATE':
+            currentTrackIndex = msg.index || 0;
+            await playCurrent();
+            if (msg.time) audio.currentTime = msg.time;
+            if (msg.volume !== undefined) audio.volume = msg.volume;
             break;
         case 'TOGGLE_PLAY':
             if (tracks.length > 0) {
                 if (audio.paused) {
-                    stopKeepalive();
                     if (!currentObjectUrl) playCurrent();
                     else audio.play();
                 } else {
                     audio.pause();
-                    startKeepalive();
                 }
             }
             broadcastState();
@@ -156,7 +128,6 @@ bc.onmessage = async (e) => {
             audio.pause();
             if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
             currentObjectUrl = null;
-            stopKeepalive();
             broadcastState();
             break;
         case 'REMOVE':
@@ -165,7 +136,6 @@ bc.onmessage = async (e) => {
                 if (tracks.length === 0) {
                     audio.pause();
                     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
-                    stopKeepalive();
                 } else {
                     if (currentTrackIndex >= tracks.length) currentTrackIndex = 0;
                     playCurrent();
@@ -204,7 +174,13 @@ bc.onmessage = async (e) => {
         case 'SHUFFLE': {
             if (tracks.length < 2) return;
             const cur = tracks[currentTrackIndex];
-            tracks.sort(() => Math.random() - 0.5);
+            
+            // Fisher-Yates Shuffle (O(n) and unbiased)
+            for (let i = tracks.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+            }
+            
             if (cur) currentTrackIndex = tracks.indexOf(cur);
             broadcastState();
             break;
@@ -212,8 +188,10 @@ bc.onmessage = async (e) => {
         case 'GET_STATE_FOR_SAVE':
             bc.postMessage({
                 type: 'STATE_FOR_SAVE',
+                playlistId: msg.playlistId || 'session-last',
                 trackNames: tracks.map(t => t.file.name),
                 currentTrackIndex,
+                currentTime: audio.currentTime,
                 volume: audio.volume
             });
             break;
@@ -222,7 +200,6 @@ bc.onmessage = async (e) => {
 
 async function playCurrent() {
     if (!tracks[currentTrackIndex]) return;
-    stopKeepalive(); // Stop fake pulse, real audio is playing
     const file = tracks[currentTrackIndex].file;
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(file);
@@ -241,3 +218,8 @@ function broadcastState() {
         volume: audio.volume
     });
 }
+
+window.addEventListener('beforeunload', () => {
+    if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+    bc.close();
+});

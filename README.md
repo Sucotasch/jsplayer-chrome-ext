@@ -7,10 +7,13 @@
 
 **Key Capabilities:**
 *   **Local File Playback:** Plays audio files directly from your hard drive without uploading them to a server.
-*   **Supported Formats:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`.
+*   **Supported Formats:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4v`, `.m4a`.
+*   **Session Persistence (Ghost Mode):** Automatically saves playback position (track index + timestamp). Shows the last played track in a "Ghost" state for instant resumption.
+*   **Playlist Catalog:** Save multiple named playlists as "Favorites" and switch between them via the Settings menu.
+*   **Search & Filter:** Real-time search within the playlist to find specific tracks.
 *   **Background Playback:** Continues playing audio even when the extension popup is closed (via Offscreen Document).
 *   **Playlist Persistence:** Saves playlist structure and source folder references using IndexedDB.
-*   **Folder Scanning:** Recursively scans selected directories for audio files.
+*   **Folder Scanning:** Recursively scans selected directories with a robust, ACK-based protocol for large tracklists.
 *   **Media Key Support:** Responds to global media keys (Play/Pause, Next, Prev) via Chrome Commands.
 *   **Drag & Drop:** Supports adding files/folders via drag-and-drop in the popup.
 *   **Shuffle & Repeat:** Built-in playback modes managed in the offscreen engine.
@@ -27,6 +30,7 @@ The extension follows the **Manifest V3** architecture pattern, separating conce
 2.  **Offscreen Document (`offscreen.html` + `offscreen.js`):**
     *   **Audio Engine:** Hosts the hidden `<audio>` element.
     *   **State Management:** Maintains the `tracks` array, current index, volume, and repeat/shuffle state.
+    *   **Reliability:** Uses an **ACK-based chunking protocol** when receiving large file lists (chunks of 50) to prevent IPC buffer overflows.
     *   **Communication:** Uses `BroadcastChannel ('audio_player_channel')` to broadcast state updates to the UI (Popup) and receive commands.
 3.  **UI Contexts (`popup.html`, `picker.html`, `loader.html`):**
     *   **Popup:** Main control interface. Sends files to the background/offscreen.
@@ -39,11 +43,11 @@ The extension uses IndexedDB to store persistent data:
 *   **Store `savedPlaylist`:** Stores the list of track names and the current playback index.
 
 #### Playlist Restoration Algorithm (`loader.js`)
-1.  **Retrieve State:** Reads `savedPlaylist` and `dirs` from IndexedDB.
+1.  **Retrieve State:** Reads `savedPlaylist` (keyed by `playlistId` or `session-last`) and `dirs` from IndexedDB.
 2.  **Permission Request:** Iterates through stored directory handles and requests `read` permission (`handle.requestPermission`). This requires a user gesture (click).
 3.  **Directory Scan:** Recursively scans granted directories for files matching audio extensions.
-4.  **Matching:** Matches found files against saved track names to reconstruct the playlist order.
-5.  **Transmission:** Sends the reconstructed file list to the Offscreen document via `BroadcastChannel`.
+4.  **Matching:** Matches found files against saved track names to reconstruct the playlist order precisely.
+5.  **Transmission & Resume:** Sends the reconstructed file list to the Offscreen document. If `autoplay` is enabled (e.g., during Ghost Resume), it jumps to the exact `currentTime` and `currentTrackIndex`.
 
 ### 3. Installation & Configuration
 
@@ -93,10 +97,13 @@ The extension uses IndexedDB to store persistent data:
 
 **Ключевые возможности:**
 *   **Воспроизведение локальных файлов:** Проигрывает аудиофайлы напрямую с жесткого диска без загрузки на сервер.
-*   **Поддерживаемые форматы:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`.
+*   **Поддерживаемые форматы:** `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4v`, `.m4a`.
+*   **Сохранение сессий (Ghost Mode):** Автоматически запоминает позицию воспроизведения (индекс трека + секунда). Показывает последний трек в «призрачном» состоянии для мгновенного возобновления.
+*   **Каталог плейлистов:** Возможность сохранять несколько именованных плейлистов в «Избранное» и переключаться между ними через меню настроек.
+*   **Поиск и фильтрация:** Поиск по плейлисту в реальном времени.
 *   **Фоновое воспроизведение:** Продолжает играть аудио даже при закрытом всплывающем окне расширения (через Offscreen Document).
 *   **Сохранение плейлиста:** Сохраняет структуру плейлиста и ссылки на папки с помощью IndexedDB.
-*   **Сканирование папок:** Рекурсивно сканирует выбранные директории на наличие аудиофайлов.
+*   **Сканирование папок:** Рекурсивно сканирует выбранные директории с использованием надежного протокола подтверждения (ACK) для больших списков.
 *   **Поддержка медиа-клавиш:** Реагирует на глобальные медиа-клавиши (Play/Pause, Next, Prev) через Chrome Commands.
 *   **Drag & Drop:** Поддержка добавления файлов/папок через перетаскивание во всплывающем окне.
 *   **Перемешивание и Повтор:** Встроенные режимы воспроизведения, управляемые в движке offscreen.
@@ -125,17 +132,16 @@ The extension uses IndexedDB to store persistent data:
 *   **Хранилище `savedPlaylist`:** Сохраняет список имен треков и текущий индекс воспроизведения.
 
 #### Алгоритм Восстановления Плейлиста (`loader.js`)
-1.  **Получение состояния:** Читает `savedPlaylist` и `dirs` из IndexedDB.
+1.  **Получение состояния:** Читает `savedPlaylist` (по ключу `playlistId` или `session-last`) и директории из IndexedDB.
 2.  **Запрос прав:** Проходит по сохраненным-handle папок и запрашивает разрешение на чтение (`handle.requestPermission`). Это требует действия пользователя (клика).
-3.  **Сканирование:** Рекурсивно сканирует одобренные директории на наличие файлов с аудио-расширениями.
-4.  **Сопоставление:** Сопоставляет найденные файлы с сохраненными именами треков для восстановления порядка плейлиста.
-5.  **Передача:** Отправляет восстановленный список файлов в Offscreen документ через `BroadcastChannel`.
+3.  **Сканирование:** Рекурсивно сканирует одобренные директории на наличие аудиофайлов.
+4.  **Сопоставление:** Сопоставляет найденные файлы с сохраненными именами треков для точного восстановления порядка.
+5.  **Передача и Возобновление:** Отправляет список файлов в Offscreen. Если включен `autoplay` (например, при Resume), плеер мгновенно переходит к нужному треку и секунде (`currentTime`).
 
 ### 3. Установка и Настройка
 
 #### Требования
 *   Браузер Google Chrome (на базе Chromium).
-*   Включен режим разработчика в расширениях Chrome.
 
 #### Шаги по Установке
 1.  **Клонирование/Загрузка:** Скачайте исходный код репозитория.

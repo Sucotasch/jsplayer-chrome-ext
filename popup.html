@@ -13,9 +13,11 @@
             <div style="position: relative; display: inline-block;">
                 <button id="mainSettingsBtn" class="icon-btn" title="Settings">⚙️</button>
                 <!-- Settings Dropdown -->
-                <div id="settingsMenu" class="add-menu" style="display: none; right: 0; left: auto; top: 100%; margin-top: 5px;">
-                    <div class="menu-label font-weight-bold">Settings</div>
-                    <button class="menu-label" id="toggleThemeBtn">🌙 Dark Theme: Off</button>
+                <div id="settingsMenu" class="add-menu" style="display: none; right: 0; left: auto; top: 100%; margin-top: 5px; width: 170px;">
+                    <div class="menu-label font-weight-bold" style="padding: 10px; border-bottom: 1px solid #eee;">⚙️ Settings</div>
+                    <button class="menu-label" id="toggleThemeBtn" style="width: 100%; text-align: left; background: none; border: none; cursor: pointer;">🌙 Dark Theme: Off</button>
+                    <button class="menu-label" id="saveFavoriteBtn" style="width: 100%; text-align: left; background: none; border: none; cursor: pointer;">⭐ Save Favorite</button>
+                    <button class="menu-label" id="showCatalogBtn" style="width: 100%; text-align: left; background: none; border: none; cursor: pointer;">📂 My Playlists</button>
                 </div>
             </div>
         </div>
@@ -85,10 +87,9 @@
 
         <div class="playlist-section">
             <div class="playlist-header">
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <h4>Playlist <span id="playlistCount" style="color: #666; font-size: 13px;">(0)</span></h4>
-                    <button id="repeatBtn" class="small-icon-btn" title="Repeat Mode">➡</button>
-                </div>
+                <h4>Playlist <span id="playlistCount" style="color: #666; font-size: 13px;">(0)</span></h4>
+                <input type="text" id="playlistSearch" placeholder="Search..." class="playlist-search" title="Filter tracks">
+                <button id="repeatBtn" class="small-icon-btn" title="Repeat Mode">➡</button>
                 <div class="playlist-actions">
                 </div>
             </div>
