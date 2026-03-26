@@ -49,6 +49,9 @@ const settingsMenu = document.getElementById('settingsMenu');
 const toggleThemeBtn = document.getElementById('toggleThemeBtn');
 const statusMsg = document.getElementById('statusBar'); // Assuming statusBar is now statusMsg
 const playlistSearch = document.getElementById('playlistSearch');
+const catalogPanel = document.getElementById('catalogPanel');
+const catalogList = document.getElementById('catalogList');
+const catalogCloseBtn = document.getElementById('catalogCloseBtn');
 
 // State
 let localTracksCount = 0;
@@ -415,26 +418,80 @@ saveFavoriteBtn.addEventListener('click', () => {
 
 const showCatalogBtn = document.getElementById('showCatalogBtn');
 showCatalogBtn.addEventListener('click', async () => {
+    settingsMenu.style.display = 'none';
+    await renderCatalog();
+});
+
+catalogCloseBtn?.addEventListener('click', () => {
+    catalogPanel.style.display = 'none';
+    document.getElementById('playlist').style.display = '';
+});
+
+async function renderCatalog() {
     const db = await openHandlesDB();
     const tx = db.transaction('savedPlaylist', 'readonly');
     const store = tx.objectStore('savedPlaylist');
     const req = store.getAll();
     req.onsuccess = () => {
         const catalog = req.result.filter(item => item.id.startsWith('catalog-'));
+        
+        catalogList.innerHTML = '';
         if (catalog.length === 0) {
-            alert('No favorite playlists saved yet.');
-            return;
+            catalogList.innerHTML = '<div class="catalog-empty">No saved playlists yet.<br>Use ⭐ Save Favorite to add one.</div>';
+        } else {
+            catalog.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'catalog-item';
+
+                const nameEl = document.createElement('span');
+                nameEl.className = 'catalog-item-name';
+                nameEl.title = item.name;
+                nameEl.textContent = '📋 ' + item.name;
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'catalog-item-delete';
+                delBtn.title = 'Delete playlist';
+                delBtn.textContent = '🗑️';
+                delBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await deleteCatalogEntry(item.id);
+                    await renderCatalog();
+                });
+
+                row.addEventListener('click', () => {
+                    chrome.windows.create({
+                        url: chrome.runtime.getURL('loader.html') + '?playlistId=' + encodeURIComponent(item.id) + '&autoplay=true',
+                        type: 'popup',
+                        width: 420,
+                        height: 320,
+                        focused: true
+                    });
+                    // Close catalog panel after triggering load
+                    catalogPanel.style.display = 'none';
+                    document.getElementById('playlist').style.display = '';
+                });
+
+                row.appendChild(nameEl);
+                row.appendChild(delBtn);
+                catalogList.appendChild(row);
+            });
         }
-        const list = catalog.map(item => `- ${item.name}`).join('\n');
-        const choice = prompt(`Saved Playlists:\n${list}\n\nEnter name to load:`);
-        if (choice) {
-            const found = catalog.find(item => item.name === choice);
-            if (found) {
-                window.open(`loader.html?playlistId=${found.id}&autoplay=true`, 'loader', 'width=400,height=300');
-            }
-        }
+
+        // Show catalog panel, hide playlist
+        document.getElementById('playlist').style.display = 'none';
+        catalogPanel.style.display = 'block';
     };
-});
+}
+
+async function deleteCatalogEntry(id) {
+    const db = await openHandlesDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('savedPlaylist', 'readwrite');
+        tx.objectStore('savedPlaylist').delete(id);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+}
 
 sortBtn?.addEventListener('click', () => {
     if (localTracksCount < 2) return;
